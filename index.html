@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root{
     --paper:#F6F3EC; --card:#FFFDF8; --ink:#1A1B1E; --muted:#6E6C63;
@@ -195,6 +197,8 @@
   .sharewho b{color:var(--gold-deep)}
   #shareUrl{width:100%;height:88px;font-size:11px;padding:10px;border:1px solid var(--line);
     border-radius:8px;background:#fff;resize:none;font-family:var(--sans);color:#444}
+  #cloudCfg{width:100%;height:140px;font-size:11.5px;padding:10px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;resize:vertical;font-family:ui-monospace,Menlo,monospace;color:#333;line-height:1.5}
   .sharenote{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
   .sharenote.warn{color:#B33}
 
@@ -225,6 +229,7 @@
   <div class="row">
     <span class="epl">EPL</span><span class="ttl">Student Progress</span>
     <span class="spacer"></span>
+    <button class="btn ghost" id="cloudBtn">☁ 클라우드</button>
     <button class="btn ghost" id="adminBtn">⚙ 반 관리</button>
     <button class="btn ghost" id="curEditBtn">✎ 커리큘럼 편집</button>
     <button class="btn ghost" id="shareBtn">🔗 학부모 링크</button>
@@ -283,6 +288,21 @@
   </div>
 </div>
 
+<div class="modal" id="cloudModal" hidden>
+  <div class="mbox">
+    <div class="mhead"><span>클라우드 동기화 · Firebase</span><button class="mx" id="cloudClose">✕</button></div>
+    <div class="mbody">
+      <p class="sharewho" id="cloudState"></p>
+      <textarea id="cloudCfg" placeholder='Firebase 설정을 붙여넣으세요. 예:&#10;{&#10;  apiKey: "...",&#10;  authDomain: "...",&#10;  projectId: "...",&#10;  ...&#10;}'></textarea>
+      <p class="sharenote">이 설정을 넣으면 <b>여러 기기에서 같은 데이터가 실시간 동기화</b>됩니다. Firebase 콘솔에서 ① Firestore Database 생성 ② 웹 앱 등록 후 config 복사 ③ 규칙 설정이 필요합니다. (config의 apiKey는 공개되어도 되는 값입니다.)</p>
+    </div>
+    <div class="mfoot">
+      <button class="btn" id="cloudConnect" style="flex:1">연결 / 저장</button>
+      <button class="btn ghost" id="cloudDisconnect" style="border-color:var(--line)">해제</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ---------- Curriculum map (마스터와 동일) ---------- */
 const CURRICULUM = {
@@ -317,13 +337,19 @@ const CURRICULUM = {
 };
 
 const KEY="epl_student_progress_v1";
+
+/* ▼▼▼ Claude Code 전용: 아래 null 을 Firebase config 객체로 교체하면 자동 연결됩니다 ▼▼▼
+   예)  const FIREBASE_CONFIG = { apiKey:"...", authDomain:"...", projectId:"...",
+        storageBucket:"...", messagingSenderId:"...", appId:"..." };                */
+const FIREBASE_CONFIG = { apiKey: "AIzaSyAsrs9XNg2U-EdgjYC_nM2hUQj_RZaKyY0", authDomain: "epl-progress.firebaseapp.com", projectId: "epl-progress", storageBucket: "epl-progress.firebasestorage.app", messagingSenderId: "460425474414", appId: "1:460425474414:web:9dbd2b62cae00840d4517f", measurementId: "G-SPDKJ05CRQ" };
+/* ▲▲▲ 여기까지 ▲▲▲ */
 const clone=o=>JSON.parse(JSON.stringify(o));
 let DB = load() || { curriculum:clone(CURRICULUM), students:[], sel:null };
 if(!DB.curriculum) DB.curriculum=clone(CURRICULUM);
 let PARENT=false;
 
 function load(){ try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch(e){return null;} }
-function save(){ if(PARENT) return; try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){status("저장 불가 (브라우저 저장소 차단)");} }
+function save(){ if(PARENT) return; try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){status("저장 불가 (브라우저 저장소 차단)");} pushCloud(); }
 function uid(){ return "s"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36); }
 function status(m){ document.getElementById("status").innerHTML=m; }
 
@@ -647,6 +673,65 @@ document.getElementById("shareCopy").addEventListener("click",()=>{
   else { document.execCommand("copy"); ok(); }
 });
 
+/* ---------- 클라우드 동기화 (Firebase, 선택) ---------- */
+const CFGKEY="epl_fb_cfg";
+let fdb=null, cloudReady=false, applyingRemote=false, pushTimer=null;
+function getCfg(){ if(FIREBASE_CONFIG && FIREBASE_CONFIG.projectId) return FIREBASE_CONFIG;
+  try{return JSON.parse(localStorage.getItem(CFGKEY)||"null");}catch(e){return null;} }
+function parseCfg(text){ const m=(text||"").match(/\{[\s\S]*\}/); if(!m) return null;
+  try{ return Function("return ("+m[0]+")")(); }catch(e){ try{return JSON.parse(m[0]);}catch(_){return null;} } }
+function docRef(){ return fdb.collection("epl").doc("progress"); }
+
+function setCloudState(msg){
+  const cfg=getCfg();
+  const txt = msg ? msg : (cloudReady ? "✓ 연결됨 · 여러 기기 실시간 동기화 중"
+    : (cfg ? "설정 저장됨 · 연결 대기 중…" : "미연결 — 이 브라우저에만 저장됩니다."));
+  const el=document.getElementById("cloudState"); if(el) el.textContent=txt;
+  const btn=document.getElementById("cloudBtn");
+  if(btn){ btn.textContent=cloudReady?"☁ 동기화 중":"☁ 클라우드"; btn.classList.toggle("on",cloudReady); }
+}
+function initCloud(){
+  const cfg=getCfg();
+  if(!cfg||!window.firebase){ setCloudState(); return; }
+  try{
+    if(!firebase.apps.length) firebase.initializeApp(cfg);
+    fdb=firebase.firestore();
+    docRef().onSnapshot(snap=>{
+      if(!snap.exists) return;
+      const data=snap.data().db; if(!data) return;
+      const a=document.activeElement;
+      if(a && (a.isContentEditable||a.tagName==="INPUT"||a.tagName==="TEXTAREA")) { return; } // 입력 중이면 화면 유지
+      applyingRemote=true;
+      DB=data; if(!Array.isArray(DB.classes))DB.classes=[]; if(!DB.curriculum)DB.curriculum=clone(CURRICULUM);
+      if(!DB.students.find(s=>s.id===DB.sel)) DB.sel=DB.students[0]?.id||null;
+      renderList(); renderDetail(); applyingRemote=false;
+    }, err=>{ setCloudState("연결 오류: "+(err.code||err.message)); });
+    docRef().get().then(snap=>{ if(!snap.exists) pushCloudNow(); }).catch(()=>{});
+    cloudReady=true; setCloudState();
+  }catch(e){ cloudReady=false; setCloudState("연결 실패: "+e.message); }
+}
+function pushCloudNow(){ if(!cloudReady||!fdb||applyingRemote) return;
+  docRef().set({db:DB,ts:Date.now()}).catch(e=>setCloudState("저장 오류: "+(e.code||e.message))); }
+function pushCloud(){ if(!cloudReady||!fdb||applyingRemote) return;
+  clearTimeout(pushTimer); pushTimer=setTimeout(pushCloudNow,600); }
+
+const cloudModal=document.getElementById("cloudModal");
+document.getElementById("cloudBtn").addEventListener("click",()=>{
+  const cfg=getCfg(); document.getElementById("cloudCfg").value=cfg?JSON.stringify(cfg,null,2):"";
+  setCloudState(); cloudModal.hidden=false;
+});
+document.getElementById("cloudClose").addEventListener("click",()=>cloudModal.hidden=true);
+cloudModal.addEventListener("click",e=>{ if(e.target===cloudModal) cloudModal.hidden=true; });
+document.getElementById("cloudConnect").addEventListener("click",()=>{
+  const cfg=parseCfg(document.getElementById("cloudCfg").value);
+  if(!cfg||!cfg.projectId){ setCloudState("설정을 인식할 수 없습니다. Firebase config 전체를 붙여넣으세요."); return; }
+  localStorage.setItem(CFGKEY,JSON.stringify(cfg)); setCloudState("연결 중… 잠시 후 새로고침됩니다."); setTimeout(()=>location.reload(),400);
+});
+document.getElementById("cloudDisconnect").addEventListener("click",()=>{
+  if(confirm("클라우드 연결을 해제할까요? (기기에 저장된 데이터는 유지됩니다)")){
+    localStorage.removeItem(CFGKEY); location.reload(); }
+});
+
 /* ---------- Init ---------- */
 function tryParentView(){
   if(!location.hash.startsWith("#v=")) return false;
@@ -662,6 +747,7 @@ if(!tryParentView()){
   DB.students.forEach(s=>registerClass(s.cls));
   if(DB.students.length && !DB.sel) DB.sel=DB.students[0].id;
   renderList(); renderDetail();
+  initCloud();
 }
 </script>
 </body>
