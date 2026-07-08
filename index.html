@@ -188,6 +188,19 @@
     border:1px solid var(--line);border-radius:8px;background:#fff}
   .mfoot .btn{background:var(--black);color:#fff;border-color:var(--black)}
   .mfoot .btn:hover{color:#fff}
+  .sharewho{font-size:13px;color:var(--ink);margin-bottom:8px}
+  .sharewho b{color:var(--gold-deep)}
+  #shareUrl{width:100%;height:88px;font-size:11px;padding:10px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;resize:none;font-family:var(--sans);color:#444}
+  .sharenote{font-size:11px;color:var(--muted);margin-top:10px;line-height:1.5}
+  .sharenote.warn{color:#B33}
+
+  /* ---- Parent read-only view ---- */
+  body.parentview .topbar,body.parentview .side{display:none !important}
+  body.parentview .stage{padding:24px}
+  body.parentview .cell{cursor:default !important}
+  body.parentview .cell:hover{outline:none !important}
+  body.parentview [data-edit],body.parentview .clsval{outline:none !important}
 
   /* ---- Print : one student on A4 ---- */
   @media print{
@@ -211,6 +224,7 @@
     <span class="spacer"></span>
     <button class="btn ghost" id="adminBtn">⚙ 반 관리</button>
     <button class="btn ghost" id="curEditBtn">✎ 커리큘럼 편집</button>
+    <button class="btn ghost" id="shareBtn">🔗 학부모 링크</button>
     <button class="btn ghost" id="printBtn">🖨 이 학생 인쇄</button>
     <button class="btn ghost" id="exportBtn">↧ 백업</button>
     <button class="btn ghost" id="importBtn">↥ 복원</button>
@@ -254,6 +268,18 @@
   </div>
 </div>
 
+<div class="modal" id="shareModal" hidden>
+  <div class="mbox">
+    <div class="mhead"><span>학부모 공유 링크</span><button class="mx" id="shareClose">✕</button></div>
+    <div class="mbody">
+      <p class="sharewho" id="shareWho"></p>
+      <textarea id="shareUrl" readonly></textarea>
+      <p class="sharenote" id="shareNote"></p>
+    </div>
+    <div class="mfoot"><button class="btn" id="shareCopy" style="flex:1">📋 링크 복사</button></div>
+  </div>
+</div>
+
 <script>
 /* ---------- Curriculum map (마스터와 동일) ---------- */
 const CURRICULUM = {
@@ -291,9 +317,10 @@ const KEY="epl_student_progress_v1";
 const clone=o=>JSON.parse(JSON.stringify(o));
 let DB = load() || { curriculum:clone(CURRICULUM), students:[], sel:null };
 if(!DB.curriculum) DB.curriculum=clone(CURRICULUM);
+let PARENT=false;
 
 function load(){ try{const r=localStorage.getItem(KEY);return r?JSON.parse(r):null;}catch(e){return null;} }
-function save(){ try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){status("저장 불가 (브라우저 저장소 차단)");} }
+function save(){ if(PARENT) return; try{localStorage.setItem(KEY,JSON.stringify(DB));}catch(e){status("저장 불가 (브라우저 저장소 차단)");} }
 function uid(){ return "s"+Date.now().toString(36)+Math.floor(Math.random()*1e4).toString(36); }
 function status(m){ document.getElementById("status").innerHTML=m; }
 
@@ -428,7 +455,7 @@ function renderDetail(){
     <div class="shdr">
       <div class="who"><div class="nm" data-edit="name">${s.name}</div>
         <div class="clsline">반 · <span class="clsval" id="clsEdit">${clsOf(s)}</span></div>
-        <div class="sub">EPL Growth Curriculum · 개별 진도표</div></div>
+        <div class="sub">${PARENT?"학부모 진도 안내 · EPL":"EPL Growth Curriculum · 개별 진도표"}</div></div>
       <div class="now"><div class="lvl">진행률 ${pct}%</div>
         <div class="pct">완료 ${cnt.done} · 진행 ${cnt.cur} · 남음 ${cnt.rem}</div></div>
     </div>
@@ -441,7 +468,7 @@ function renderDetail(){
       <span class="lg"><span class="sw r"></span>남음</span>
       <span class="sig">EPL · <b>동백 1관 · 백현 2관</b></span>
     </div>
-    <div class="hint">${curEditing?"커리큘럼 편집 모드 · 칸의 교재·레벨명·시즌명을 고치거나 빈 칸에 새 교재를 입력하세요 (전체 학생 공통 반영).":"각 스킬 행에서 '지금 진행 중'인 칸을 클릭하세요. 스킬마다 따로 기록됩니다 (Reading·Grammar·Writing·Vocabulary 독립)."}</div>`;
+    <div class="hint">${PARENT?"✓ 완료한 교재 · 진행 중 = 지금 배우는 교재 · 나머지는 앞으로 배울 순서입니다.":(curEditing?"커리큘럼 편집 모드 · 칸의 교재·레벨명·시즌명을 고치거나 빈 칸에 새 교재를 입력하세요 (전체 학생 공통 반영).":"각 스킬 행에서 '지금 진행 중'인 칸을 클릭하세요. 스킬마다 따로 기록됩니다 (Reading·Grammar·Writing·Vocabulary 독립).")}</div>`;
   sheet.innerHTML=html;
 
   const grid=document.getElementById("grid");
@@ -487,14 +514,15 @@ function renderDetail(){
         else cls+=" rem";
         const c=el("div",cls,`<span class="bk">${empty?"·":v}</span>`);
         c.style.gridColumn=3+ci; c.style.gridRow=r;
-        if(!empty) c.onclick=()=>{ pos[si] = (pos[si]===col ? -1 : col); save(); renderList(); renderDetail(); };
+        if(!empty && !PARENT) c.onclick=()=>{ pos[si] = (pos[si]===col ? -1 : col); save(); renderList(); renderDetail(); };
         grid.appendChild(c);
       });
     });
     row+=4;
   });
 
-  // inline rename
+  // inline rename (편집 모드 아닐 때만)
+  if(!PARENT){
   const nmEl=sheet.querySelector('[data-edit="name"]');
   nmEl.contentEditable=true;
   nmEl.addEventListener("blur",()=>{ const v=nmEl.textContent.trim(); if(v){ s.name=v;
@@ -506,6 +534,7 @@ function renderDetail(){
   clsEl.addEventListener("blur",()=>{ let v=clsEl.textContent.trim(); if(v==="미배정") v="";
     s.cls=v; registerClass(v); save(); renderList(); });
   clsEl.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); clsEl.blur(); }});
+  }
 }
 
 /* ---------- Toolbar ---------- */
@@ -586,10 +615,50 @@ document.getElementById("adminAdd").addEventListener("click",()=>{
   if(v){ registerClass(v); inp.value=""; save(); renderAdmin(); } });
 document.getElementById("adminNew").addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); document.getElementById("adminAdd").click(); }});
 
+/* ---------- 학부모 공유 링크 ---------- */
+const shareModal=document.getElementById("shareModal");
+document.getElementById("shareBtn").addEventListener("click",()=>{
+  const s=DB.students.find(x=>x.id===DB.sel); if(!s){ status("먼저 학생을 선택하세요"); return; }
+  const payload={ s:{name:s.name,cls:s.cls||"",pos:ensurePos(s)}, c:DB.curriculum };
+  const b64=btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const url=location.origin+location.pathname+"#v="+b64;
+  document.getElementById("shareWho").innerHTML=`<b>${s.name}</b> 학생의 진도를 담은 링크입니다.`;
+  document.getElementById("shareUrl").value=url;
+  const note=document.getElementById("shareNote");
+  if(location.protocol==="file:"){
+    note.className="sharenote warn";
+    note.textContent="⚠ 지금은 파일에서 열려 이 링크가 작동하지 않습니다. 배포된 주소(예: github.io)에서 링크를 만들어야 학부모가 열 수 있습니다.";
+  }else{
+    note.className="sharenote";
+    note.textContent="이 링크는 '현재 시점'의 진도를 담은 스냅샷입니다. 진도가 바뀌면 링크를 다시 만들어 보내세요. 링크를 연 학부모는 보기만 가능하며 수정할 수 없습니다.";
+  }
+  shareModal.hidden=false;
+});
+document.getElementById("shareClose").addEventListener("click",()=>shareModal.hidden=true);
+shareModal.addEventListener("click",e=>{ if(e.target===shareModal) shareModal.hidden=true; });
+document.getElementById("shareCopy").addEventListener("click",()=>{
+  const ta=document.getElementById("shareUrl"); ta.select();
+  const ok=()=>{ document.getElementById("shareCopy").textContent="✓ 복사됨"; setTimeout(()=>document.getElementById("shareCopy").textContent="📋 링크 복사",1500); };
+  if(navigator.clipboard){ navigator.clipboard.writeText(ta.value).then(ok).catch(()=>{document.execCommand("copy");ok();}); }
+  else { document.execCommand("copy"); ok(); }
+});
+
 /* ---------- Init ---------- */
-DB.students.forEach(s=>registerClass(s.cls));
-if(DB.students.length && !DB.sel) DB.sel=DB.students[0].id;
-renderList(); renderDetail();
+function tryParentView(){
+  if(!location.hash.startsWith("#v=")) return false;
+  try{
+    const payload=JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(3)))));
+    PARENT=true; document.body.classList.add("parentview");
+    DB={ curriculum:payload.c, classes:[],
+      students:[{id:'p',name:payload.s.name,cls:payload.s.cls||"",pos:payload.s.pos||[-1,-1,-1,-1]}], sel:'p' };
+    renderDetail(); return true;
+  }catch(e){ return false; }
+}
+if(!tryParentView()){
+  DB.students.forEach(s=>registerClass(s.cls));
+  if(DB.students.length && !DB.sel) DB.sel=DB.students[0].id;
+  renderList(); renderDetail();
+}
 </script>
 </body>
 </html>
