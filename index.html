@@ -159,6 +159,9 @@
   body.curedit .cell.na{background:var(--card) !important}
   body.curedit .cell:hover{outline:1px dashed rgba(201,162,75,.7);outline-offset:-2px}
   body.curedit [contenteditable]:focus{outline:2px solid var(--gold);outline-offset:-2px;border-radius:2px}
+  body.curedit .cell.cedit{cursor:text}
+  body.curedit .cell.cedit .bk{display:block;width:100%;min-height:1.4em;outline:none}
+  body.curedit .cell.cedit .bk:empty::before{content:"＋ 교재 입력";color:var(--gold);opacity:.55;font-size:9px;pointer-events:none}
 
   /* ---- Admin modal ---- */
   .modal{position:fixed;inset:0;z-index:50;background:rgba(20,21,25,.55);
@@ -500,10 +503,11 @@ function renderDetail(){
       sk[1].forEach((v,ci)=>{
         const col=ti*4+ci, empty=v.trim()==="";
         if(curEditing){
-          const c=el("div","cell",`<span class="bk" contenteditable="true">${empty?"":v}</span>`);
+          const c=el("div","cell cedit",`<span class="bk" contenteditable="true">${empty?"":v}</span>`);
           c.style.gridColumn=3+ci; c.style.gridRow=r;
           const bk=c.querySelector('.bk');
           bk.addEventListener("input",()=>{ DB.curriculum.tiers[ti].skills[si][1][ci]=bk.textContent.trim(); save(); });
+          c.addEventListener("click",()=>bk.focus());
           grid.appendChild(c); return;
         }
         let cls="cell";
