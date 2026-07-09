@@ -49,6 +49,19 @@
     border:1px solid var(--line);border-radius:8px;background:#fff}
   .grouphdr{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--gold-deep);
     font-weight:600;padding:11px 12px 4px;position:sticky;top:0;background:#EFEBE1}
+  .movebtn{margin-top:8px;width:100%;font-family:var(--sans);font-size:11.5px;padding:7px;
+    border:1px solid var(--line);border-radius:8px;background:#fff;cursor:pointer;color:var(--muted)}
+  .movebtn:hover{border-color:var(--gold);color:var(--gold-deep)}
+  .movebtn.on{background:var(--gold);border-color:var(--gold-deep);color:#231d0d;font-weight:600}
+  .movebar{display:flex;align-items:center;gap:6px;padding:9px 10px;border-top:1px solid #D8D2C4;background:#E9E4D9}
+  .movebar[hidden]{display:none}
+  .movebar .allsel{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;white-space:nowrap}
+  .movebar select{flex:1;min-width:0;font-family:var(--sans);font-size:11.5px;padding:6px 6px;
+    border:1px solid var(--line);border-radius:7px;background:#fff}
+  .movebar .btn{padding:6px 11px;font-size:11.5px;background:var(--black);color:#fff;border-color:var(--black)}
+  .movebar .btn:disabled{opacity:.4;cursor:default}
+  .srow .chk{margin-right:2px;pointer-events:none;accent-color:var(--gold-deep)}
+  .srow.sel{background:rgba(201,162,75,.16)}
   .side .count{font-size:10.5px;color:var(--muted);letter-spacing:.5px;margin:8px 2px 0}
   .slist{flex:1;overflow-y:auto;padding:6px}
   .srow{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;
@@ -78,6 +91,9 @@
   .shdr .who .nm{font-family:var(--serif);font-weight:700;font-size:26px;letter-spacing:.3px}
   .shdr .who .clsline{margin-top:5px;font-size:11.5px;color:var(--muted)}
   .shdr .who .clsline .clsval{color:var(--gold-deep);font-weight:600;border-bottom:1px dashed transparent;padding:0 2px}
+  .shdr .who .clssel{font-family:var(--sans);font-size:12px;color:var(--gold-deep);font-weight:600;
+    border:1px solid var(--line);border-radius:6px;padding:3px 7px;background:#fff;cursor:pointer}
+  .shdr .who .clssel:hover{border-color:var(--gold)}
   body.plain .shdr .who .clsval{cursor:text}
   .shdr .who .clsval:focus{outline:none;border-bottom-color:var(--gold);background:rgba(201,162,75,.1)}
   .shdr .who .sub{font-size:11px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;margin-top:3px}
@@ -217,6 +233,7 @@
     .stage{display:block;padding:0;overflow:visible}
     #sheet{width:297mm;height:210mm;min-height:0;box-shadow:none}
     .cell:hover{outline:none}
+    .clssel{-webkit-appearance:none;appearance:none;border:none !important;padding:0 !important;background:none !important}
     .rail::before,.rail.atlvl,.grid,.cell.done,.cell.cur,.cell.na,.bar i,.legend .sw{
       -webkit-print-color-adjust:exact;print-color-adjust:exact}
   }
@@ -249,8 +266,14 @@
       <select class="clsfilter" id="clsFilter"></select>
       <input class="search" id="search" placeholder="이름 검색…">
       <div class="count" id="scount"></div>
+      <button class="movebtn" id="moveModeBtn">⇄ 반 이동</button>
     </div>
     <div class="slist" id="slist"></div>
+    <div class="movebar" id="moveBar" hidden>
+      <label class="allsel"><input type="checkbox" id="selAll"> 전체</label>
+      <select id="moveTarget"></select>
+      <button class="btn" id="moveGo" disabled>이동</button>
+    </div>
     <div class="add">
       <input id="newCls" placeholder="반 (예: 월수 A)" list="clsOptions">
       <datalist id="clsOptions"></datalist>
@@ -378,6 +401,7 @@ const clsFilter=document.getElementById("clsFilter");
 const clsOptions=document.getElementById("clsOptions");
 const newCls=document.getElementById("newCls");
 let filterCls="__all";
+let selectMode=false; const selected=new Set(); let shownIds=[];
 
 if(!Array.isArray(DB.classes)) DB.classes=[];
 function registerClass(c){ c=(c||"").trim(); if(c&&!DB.classes.includes(c)) DB.classes.push(c); }
@@ -404,16 +428,24 @@ function populateChrome(){
 function studentRow(s){
   const cnt=bookCounts(s); const lvl = cnt.done+cnt.cur>0 ? Math.round(cnt.done/cnt.tot*100)+"%" : "미시작";
   const row=document.createElement("div");
-  row.className="srow"+(s.id===DB.sel?" on":"");
-  row.innerHTML=`<span class="nm">${s.name}</span><span class="meta">${lvl}</span><span class="del" title="삭제">✕</span>`;
-  const pick=()=>{ DB.sel=s.id; save(); renderList(); renderDetail(); };
-  row.querySelector(".nm").onclick=pick; row.querySelector(".meta").onclick=pick;
-  row.querySelector(".del").onclick=(e)=>{ e.stopPropagation();
-    if(confirm(`'${s.name}' 학생을 삭제할까요?`)){
-      DB.students=DB.students.filter(x=>x.id!==s.id);
-      if(DB.sel===s.id) DB.sel=DB.students[0]?.id||null;
-      save(); populateChrome(); renderList(); renderDetail();
-    }};
+  if(selectMode){
+    row.className="srow"+(selected.has(s.id)?" sel":"");
+    row.innerHTML=`<input type="checkbox" class="chk"${selected.has(s.id)?" checked":""}><span class="nm">${s.name}</span><span class="meta">${lvl}</span>`;
+    row.onclick=()=>{ if(selected.has(s.id))selected.delete(s.id); else selected.add(s.id);
+      row.classList.toggle("sel",selected.has(s.id));
+      const cb=row.querySelector('.chk'); if(cb) cb.checked=selected.has(s.id); updateMoveBar(); };
+  } else {
+    row.className="srow"+(s.id===DB.sel?" on":"");
+    row.innerHTML=`<span class="nm">${s.name}</span><span class="meta">${lvl}</span><span class="del" title="삭제">✕</span>`;
+    const pick=()=>{ DB.sel=s.id; save(); renderList(); renderDetail(); };
+    row.querySelector(".nm").onclick=pick; row.querySelector(".meta").onclick=pick;
+    row.querySelector(".del").onclick=(e)=>{ e.stopPropagation();
+      if(confirm(`'${s.name}' 학생을 삭제할까요?`)){
+        DB.students=DB.students.filter(x=>x.id!==s.id);
+        if(DB.sel===s.id) DB.sel=DB.students[0]?.id||null;
+        save(); populateChrome(); renderList(); renderDetail();
+      }};
+  }
   return row;
 }
 
@@ -422,6 +454,7 @@ function renderList(){
   const q=search.value.trim().toLowerCase();
   slist.innerHTML="";
   let pool=DB.students.filter(s=> (filterCls==="__all"||clsOf(s)===filterCls) && (!q||s.name.toLowerCase().includes(q)) );
+  shownIds=pool.map(x=>x.id);
   document.getElementById("scount").textContent=
     `재원 ${DB.students.length}명`+((filterCls!=="__all"||q)?` · 표시 ${pool.length}`:"");
 
@@ -437,6 +470,7 @@ function renderList(){
   } else {
     pool.forEach(s=>slist.appendChild(studentRow(s)));
   }
+  updateMoveBar();
 }
 
 function addStudent(name,cls){
@@ -452,6 +486,43 @@ newName.addEventListener("keydown",e=>{ if(e.key==="Enter"){ const s=addStudent(
 search.addEventListener("input",renderList);
 clsFilter.addEventListener("change",()=>{ filterCls=clsFilter.value;
   if(filterCls!=="__all") newCls.value=filterCls; renderList(); });
+
+/* ---- 반 이동 (여러 명 선택) ---- */
+const moveModeBtn=document.getElementById("moveModeBtn");
+const moveBar=document.getElementById("moveBar");
+const moveTarget=document.getElementById("moveTarget");
+function populateMoveTarget(){
+  moveTarget.innerHTML=orderedClasses().map(c=>`<option value="${c}">${c}</option>`).join("")+
+    `<option value="__unassigned">미배정</option><option value="__new">＋ 새 반…</option>`;
+}
+function updateMoveBar(){
+  const go=document.getElementById("moveGo"); if(!go) return;
+  go.textContent=selected.size?`${selected.size}명 이동`:"이동"; go.disabled=selected.size===0;
+  const all=document.getElementById("selAll");
+  if(all) all.checked=shownIds.length>0 && shownIds.every(id=>selected.has(id));
+}
+moveModeBtn.addEventListener("click",()=>{
+  selectMode=!selectMode; selected.clear();
+  moveModeBtn.classList.toggle("on",selectMode);
+  moveModeBtn.textContent=selectMode?"✕ 이동 취소":"⇄ 반 이동";
+  moveBar.hidden=!selectMode;
+  if(selectMode){ populateMoveTarget(); if(filterCls!=="__all") moveTarget.value=filterCls; }
+  renderList();
+});
+document.getElementById("selAll").addEventListener("change",e=>{
+  if(e.target.checked) shownIds.forEach(id=>selected.add(id)); else shownIds.forEach(id=>selected.delete(id));
+  renderList();
+});
+document.getElementById("moveGo").addEventListener("click",()=>{
+  if(!selected.size) return;
+  const t=moveTarget.value; let target;
+  if(t==="__new"){ const nm=(prompt("이동할 새 반 이름")||"").trim(); if(!nm) return; target=nm; registerClass(nm); }
+  else if(t==="__unassigned") target=""; else target=t;
+  let n=0; DB.students.forEach(s=>{ if(selected.has(s.id)){ s.cls=target; n++; } });
+  selected.clear(); selectMode=false; moveBar.hidden=true;
+  moveModeBtn.classList.remove("on"); moveModeBtn.textContent="⇄ 반 이동";
+  save(); populateChrome(); renderList(); renderDetail(); status(`<b>${n}명</b>을 '${target||"미배정"}'(으)로 이동`);
+});
 
 const bulk=document.getElementById("bulk");
 document.getElementById("bulkToggle").addEventListener("click",()=>{
@@ -483,7 +554,7 @@ function renderDetail(){
   let html=`
     <div class="shdr">
       <div class="who"><div class="nm" data-edit="name">${s.name}</div>
-        <div class="clsline">반 · <span class="clsval" id="clsEdit">${clsOf(s)}</span></div>
+        <div class="clsline">반 · ${PARENT? `<span class="clsval">${clsOf(s)}</span>` : `<select class="clssel" id="clsSel"></select>`}</div>
         <div class="sub">${PARENT?"학부모 진도 안내 · EPL":"EPL Growth Curriculum · 개별 진도표"}</div></div>
       <div class="now"><div class="lvl">진행률 ${pct}%</div>
         <div class="pct">완료 ${cnt.done} · 진행 ${cnt.cur} · 남음 ${cnt.rem}</div></div>
@@ -559,11 +630,22 @@ function renderDetail(){
     DB.students.sort((a,b)=>a.name.localeCompare(b.name,"ko")); save(); renderList(); } });
   nmEl.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); nmEl.blur(); }});
 
-  const clsEl=sheet.querySelector('#clsEdit');
-  clsEl.contentEditable=true;
-  clsEl.addEventListener("blur",()=>{ let v=clsEl.textContent.trim(); if(v==="미배정") v="";
-    s.cls=v; registerClass(v); save(); renderList(); });
-  clsEl.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); clsEl.blur(); }});
+  const clsSel=sheet.querySelector('#clsSel');
+  if(clsSel){
+    const cur=clsOf(s);
+    let html=orderedClasses().map(c=>`<option value="${c}"${c===cur?" selected":""}>${c}</option>`).join("");
+    html+=`<option value="__unassigned"${cur==="미배정"?" selected":""}>미배정</option>`;
+    html+=`<option value="__new">＋ 새 반 만들기…</option>`;
+    clsSel.innerHTML=html;
+    clsSel.addEventListener("change",()=>{
+      const v=clsSel.value;
+      if(v==="__new"){ const nm=(prompt("새 반 이름")||"").trim();
+        if(!nm){ renderDetail(); return; } s.cls=nm; registerClass(nm); }
+      else if(v==="__unassigned"){ s.cls=""; }
+      else { s.cls=v; }
+      save(); renderList(); renderDetail();
+    });
+  }
   }
 }
 
